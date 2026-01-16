@@ -380,59 +380,112 @@ class SpeedClassification:
     diff_sec: float     # 差異秒數
 
 
-def classify_speed(diff_sec: float) -> SpeedClassification:
+def classify_speed(diff_sec: float, avg_diff: Optional[float] = None) -> SpeedClassification:
     """
-    根據差異秒數判定步速類型
-    Classify pace based on difference in seconds
-    
-    規則 / Rules:
-        - ≤ -0.5 秒 → "快步速" (FAST)
-        - -0.5 ~ +0.5 秒 → "普通步速" (NORMAL)
-        - ≥ +0.5 秒 → "慢步速" (SLOW)
-    
+    根據差異秒數判定步速類型（新版5級分類）
+    Classify pace based on difference in seconds (NEW 5-level classification)
+
+    新版規則 / New Rules (當提供 avg_diff 時使用動態判定):
+    - ≤ avg - 0.5秒 → "快" (VERY_FAST) 🟢
+    - avg - 0.5 ~ avg - 0.3 → "偏快" (FAST) 🟢
+    - avg - 0.3 ~ avg + 0.3 → "中等" (NORMAL) 🟡
+    - avg + 0.3 ~ avg + 0.5 → "偏慢" (SLOW) 🔴
+    - ≥ avg + 0.5秒 → "慢" (VERY_SLOW) 🔴
+
+    舊版兼容規則 / Legacy Rules (當 avg_diff 為 None 時):
+    - ≤ -0.5秒 → "快步速" (FAST)
+    - -0.5 ~ +0.5 → "普通步速" (NORMAL)
+    - ≥ +0.5秒 → "慢步速" (SLOW)
+
     Args:
         diff_sec: 實際 - 標準 的差異（秒）
-                   正數表示較標準時間慢
-                   Negative = faster, Positive = slower
-    
+                 正數表示較標準時間慢
+                 Negative = faster, Positive = slower
+        avg_diff: 當天所有場次的平均差異值（用於動態判定）
+                 如果為 None，則使用舊版固定閾值
+
     Returns:
         SpeedClassification: 包含分類、標籤和差異的物件
-    
+
     例子 / Examples:
-        >>> classify_speed(-1.0)  # 比標準快1秒
-        SpeedClassification(value='FAST', label_cn='快步速', ...)
-        
-        >>> classify_speed(0.0)   # 等同標準時間
-        SpeedClassification(value='NORMAL', label_cn='普通步速', ...)
-        
-        >>> classify_speed(1.5)   # 比標準慢1.5秒
-        SpeedClassification(value='SLOW', label_cn='慢步速', ...)
+        >>> classify_speed(-1.0, avg_diff=-0.38)  # 比平均快很多
+        SpeedClassification(value='VERY_FAST', label_cn='快', ...)
+
+        >>> classify_speed(-0.61, avg_diff=-0.38)  # 接近平均
+        SpeedClassification(value='NORMAL', label_cn='中等', ...)
+
+        >>> classify_speed(0.09, avg_diff=-0.38)  # 比平均慢
+        SpeedClassification(value='SLOW', label_cn='偏慢', ...)
     """
     diff_rounded = round(diff_sec, 2)
-    
-    if diff_rounded <= -0.5:
-        return SpeedClassification(
-            value="FAST",
-            label_cn="快步速",
-            label_en="Fast Pace",
-            diff_sec=diff_rounded
-        )
-    elif diff_rounded < 0.5:  # -0.5 < diff < 0.5
-        return SpeedClassification(
-            value="NORMAL",
-            label_cn="普通步速",
-            label_en="Normal Pace",
-            diff_sec=diff_rounded
-        )
-    else:  # >= 0.5
-        return SpeedClassification(
-            value="SLOW",
-            label_cn="慢步速",
-            label_en="Slow Pace",
-            diff_sec=diff_rounded
-        )
 
+    # 新版動態判定（基於當天平均值）
+    if avg_diff is not None:
+        avg = round(avg_diff, 2)
+        threshold_very_fast = avg - 0.5
+        threshold_fast = avg - 0.3
+        threshold_slow = avg + 0.3
+        threshold_very_slow = avg + 0.5
 
+        if diff_rounded <= threshold_very_fast:
+            return SpeedClassification(
+                value="VERY_FAST",
+                label_cn="快",
+                label_en="Fast",
+                diff_sec=diff_rounded
+            )
+        elif diff_rounded <= threshold_fast:
+            return SpeedClassification(
+                value="FAST",
+                label_cn="偏快",
+                label_en="Moderately Fast",
+                diff_sec=diff_rounded
+            )
+        elif diff_rounded < threshold_slow:
+            return SpeedClassification(
+                value="NORMAL",
+                label_cn="中等",
+                label_en="Normal Pace",
+                diff_sec=diff_rounded
+            )
+        elif diff_rounded < threshold_very_slow:
+            return SpeedClassification(
+                value="SLOW",
+                label_cn="偏慢",
+                label_en="Moderately Slow",
+                diff_sec=diff_rounded
+            )
+        else:  # >= threshold_very_slow
+            return SpeedClassification(
+                value="VERY_SLOW",
+                label_cn="慢",
+                label_en="Slow",
+                diff_sec=diff_rounded
+            )
+
+    # 舊版固定判定（向後兼容）
+    else:
+        if diff_rounded <= -0.5:
+            return SpeedClassification(
+                value="FAST",
+                label_cn="快步速",
+                label_en="Fast Pace",
+                diff_sec=diff_rounded
+            )
+        elif diff_rounded < 0.5:  # -0.5 < diff < 0.5
+            return SpeedClassification(
+                value="NORMAL",
+                label_cn="普通步速",
+                label_en="Normal Pace",
+                diff_sec=diff_rounded
+            )
+        else:  # >= 0.5
+            return SpeedClassification(
+                value="SLOW",
+                label_cn="慢步速",
+                label_en="Slow Pace",
+                diff_sec=diff_rounded
+            )
 # ============================================================================
 # 第五部分：綜合分析函數
 # PART 5: COMPREHENSIVE ANALYSIS FUNCTIONS

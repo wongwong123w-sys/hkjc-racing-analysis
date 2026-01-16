@@ -199,68 +199,104 @@ class RacePaceAnalyzer:
         
         return pd.DataFrame(results)
     
-    def analyze_sectional_times(self) -> pd.DataFrame:
-        """分析分段時間"""
+    def analyze_sectional_times(self, use_two_stage: bool = True) -> pd.DataFrame:
+        """
+        分析分段時間（支持新版兩階段判定）
+
+        Args:
+            use_two_stage: 是否使用兩階段判定（默認True）
+                          True = 使用當天平均值動態判定（新版）
+                          False = 使用固定閾值判定（舊版）
+
+        Returns:
+            pd.DataFrame: 包含步速分析結果的數據框
+        """
         results = []
-        
         race_no_col = self._find_column(['場次', 'race', '馬號'])
-        
+
+        # 第一階段：收集所有場次的差異值（用於計算平均）
+        all_diffs = []
+        temp_results = []
+
         for idx, row in self.races_df.iterrows():
             try:
                 race_no = idx + 1 if race_no_col is None else row.get(race_no_col, idx + 1)
-                
+
                 # 從 metadata 提取
                 race_info = self._extract_race_info_from_metadata(int(race_no))
                 class_name = race_info['class']
                 distance = race_info['distance']
                 race_name = race_info['race_name'] or ""
-                
+
                 if not class_name or not distance:
                     continue
-                
+
                 # 查詢標準分段總和
                 std_section_sum = get_standard_section_sum(
                     self.racecourse, int(distance), str(class_name)
                 )
+
                 if std_section_sum is None:
                     continue
-                
+
                 # 累加所有分段時間
                 actual_section_sum = 0
-                segment_cols = [c for c in self.races_df.columns 
+                segment_cols = [c for c in self.races_df.columns
                                if c.startswith('第') and c.endswith('時間')]
-                
+
                 found_segments = False
                 for seg_col in segment_cols:
                     seg_val = self._extract_time_value(row[seg_col])
                     if seg_val is not None:
                         actual_section_sum += seg_val
                         found_segments = True
-                
+
                 if not found_segments or actual_section_sum == 0:
                     continue
-                
+
                 # 計算差異
                 diff_sec = actual_section_sum - std_section_sum
-                speed_class = classify_speed(diff_sec)
-                
-                results.append({
-                    "場次": str(race_no),
-                    "班次": str(class_name),
-                    "途程(米)": int(distance),
-                    "賽事名稱": str(race_name),
-                    "頭馬實際分段總和(秒)": round(actual_section_sum, 2),
-                    "標準分段總和(秒)": std_section_sum,
-                    "分段差異(秒)": round(diff_sec, 2),
-                    "步速分型": speed_class.label_cn,
+
+                # 暫存結果
+                temp_results.append({
+                    'race_no': str(race_no),
+                    'class_name': str(class_name),
+                    'distance': int(distance),
+                    'race_name': str(race_name),
+                    'actual_section_sum': round(actual_section_sum, 2),
+                    'std_section_sum': std_section_sum,
+                    'diff_sec': round(diff_sec, 2)
                 })
+                all_diffs.append(diff_sec)
+
             except Exception as e:
                 self.extraction_log.append(f"Sectional row {idx} error: {e}")
                 continue
-        
+
+        # 第二階段：使用平均值進行分類
+        if use_two_stage and len(all_diffs) > 0:
+            avg_diff = sum(all_diffs) / len(all_diffs)
+            self.extraction_log.append(f"✅ 兩階段分析: 平均差異 = {avg_diff:.2f} 秒")
+        else:
+            avg_diff = None
+            self.extraction_log.append("⚠️ 使用固定閾值判定（舊版）")
+
+        # 為每個場次分類
+        for temp in temp_results:
+            speed_class = classify_speed(temp['diff_sec'], avg_diff=avg_diff)
+
+            results.append({
+                "場次": temp['race_no'],
+                "班次": temp['class_name'],
+                "途程(米)": temp['distance'],
+                "賽事名稱": temp['race_name'],
+                "頭馬實際分段總和(秒)": temp['actual_section_sum'],
+                "標準分段總和(秒)": temp['std_section_sum'],
+                "分段差異(秒)": temp['diff_sec'],
+                "步速分型": speed_class.label_cn,
+            })
+
         return pd.DataFrame(results)
-
-
 def render_pace_analysis_section(
     app_state,
     df: pd.DataFrame,
