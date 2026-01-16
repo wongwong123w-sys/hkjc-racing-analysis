@@ -10,9 +10,36 @@ import pandas as pd
 import numpy as np
 import re
 import os
-from analyzers.report_analyzer import RaceSegmentAnalyzer, _classify_finishing_pace, _classify_pace_type
+from analyzers.report_analyzer import RaceSegmentAnalyzer, _classify_finishing_pace
 from hkjc_sectional import load_race_from_csv
 
+
+
+def _classify_pace_type_v2(diff_sec: float, avg_diff: float = None) -> str:
+    """步速類型分類（新版5級分類）"""
+    if avg_diff is not None:
+        threshold_very_fast = avg_diff - 0.5
+        threshold_fast = avg_diff - 0.3
+        threshold_slow = avg_diff + 0.3
+        threshold_very_slow = avg_diff + 0.5
+
+        if diff_sec <= threshold_very_fast:
+            return "🟢 快"
+        elif diff_sec <= threshold_fast:
+            return "🟢 偏快"
+        elif diff_sec < threshold_slow:
+            return "🟡 中等"
+        elif diff_sec < threshold_very_slow:
+            return "🔴 偏慢"
+        else:
+            return "🔴 慢"
+    else:
+        if diff_sec <= -0.5:
+            return "快步速"
+        elif diff_sec < 0.5:
+            return "普通步速"
+        else:
+            return "慢步速"
 
 def render_report_page(standard_times_data):
     """
@@ -115,6 +142,11 @@ def render_complete_analysis_section(race_date: str, num_races: int, standard_ti
 
         st.success(f"✅ 成功讀取 {len(all_results)} 場賽事")
 
+        # 計算平均分段差異（新版步速分類需要）
+        valid_segment_diffs = [r['segment_sum_diff'] for r in all_results 
+                               if r['segment_sum_diff'] is not None]
+        avg_segment_diff = sum(valid_segment_diffs) / len(valid_segment_diffs) if valid_segment_diffs else None
+
         # 建立標籤頁
         tab1, tab2, tab3 = st.tabs(["一、完成時間分析", "二、步速分析", "三、詳細數據"])
 
@@ -168,7 +200,7 @@ def render_complete_analysis_section(race_date: str, num_races: int, standard_ti
                         '實際分段總和': f"{result['actual_segment_sum']:.2f}秒",
                         '標準分段總和': f"{result['standard_segment_sum']:.2f}秒",
                         '差異(秒)': f"{result['segment_sum_diff']:+.2f}",
-                        '步速類型': _classify_pace_type(result['segment_sum_diff']),
+                        '步速類型': _classify_pace_type_v2(result['segment_sum_diff'], avg_segment_diff),
                     })
 
             if pace_data:
