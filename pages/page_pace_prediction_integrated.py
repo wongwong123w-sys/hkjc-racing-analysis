@@ -1,18 +1,20 @@
 
 # -*- coding: utf-8 -*-
 """
-🏃 跑法預測頁面 (v5.7 - 完整版)
+🏃 跑法預測頁面 (v6.0 - 混合預測版)
 
 page_pace_prediction_integrated.py
 
-版本: v5.7
+版本: v6.0
+- ✅ 混合預測：前段壓力 + 馬群分佈 + 距離影響
+- ✅ 信心度：動態加權計算
 - ✅ 同步表刷新：編輯後自動更新 Part 2 & Part 3
 - ✅ 完善評論：詳細檔位分析
 - ✅ 5 種配速：快/偏快/中等/偏慢/慢
 - ✅ 動態期望分佈顯示
 - ✅ 實際 vs 期望對比
 
-日期: 2026-01-10
+日期: 2026-01-16
 """
 
 import streamlit as st
@@ -47,7 +49,7 @@ def load_analyzers():
         from analyzers.pace_predictor import PacePredictor as PP
         RunstylePredictor = RP
         PacePredictor = PP
-        logger.info("✅ 已載入分析器 (v4.1 + v3.0)")
+        logger.info("✅ 已載入分析器 (v4.1 + v4.0 混合預測)")
         return True
     except ImportError as e1:
         logger.debug(f"方式 1 失敗: {str(e1)}")
@@ -81,7 +83,7 @@ def safe_int_convert(value, default=0):
 
 
 def render_pace_prediction_analysis(race_horses_data, total_runners=None):
-    """渲染跑法預測分析頁面 (v5.7)"""
+    """渲染跑法預測分析頁面 (v6.0 - 混合預測版)"""
     
     current_race_id = st.session_state.get('race_id')
     
@@ -416,12 +418,12 @@ def render_pace_prediction_analysis(race_horses_data, total_runners=None):
             st.warning(f"分析失敗: {e}")
     
     # ========================================
-    # Part 3: 配速診斷（使用最新數據）
+    # Part 3: 配速診斷（✨ 使用混合預測）
     # ========================================
     
     st.write("---")
-    st.header("📊 Part 3: 配速診斷")
-    st.info("ℹ️ 版本: PacePredictor v3.0 (Five-Level) - 自動按比例調整")
+    st.header("📊 Part 3: 配速診斷 (混合預測)")
+    st.info("ℹ️ 版本: PacePredictor v4.0 (Hybrid) - 前段壓力 + 馬群分佈 + 距離影響")
     
     if st.session_state.pace_predictions and PacePredictor:
         try:
@@ -430,37 +432,160 @@ def render_pace_prediction_analysis(race_horses_data, total_runners=None):
             # 獲取當前馬匹數量
             current_total = len(st.session_state.pace_predictions)
             
-            # ✅ 使用最新的 session_state 數據
-            diag = predictor.predict_pace_diagnostic(st.session_state.pace_predictions)
+            # ========================================
+            # 📍 關鍵改動：提取賽事距離
+            # ========================================
+            race_distance = st.session_state.get('race_distance', 1800)  # 默認值
+            logger.info(f"🏁 賽事距離: {race_distance} 米")
+            
+            # ========================================
+            # ✨ 使用新的混合預測方法 v1.0
+            # ========================================
+            diag = predictor.predict_pace_hybrid_v1_confidence_weighted(
+                st.session_state.pace_predictions,
+                total_horses=current_total
+            )
             
             # ========================================
             # 顯示當前場次信息
             # ========================================
-            st.info(f"📊 當前場次: {current_total} 匹馬 | 期望分佈已自動調整")
+            st.info(f"📊 當前場次: {current_total} 匹馬 | 賽程: {race_distance} 米")
             
-            st.subheader("🏁 配速診斷")
+            # ========================================
+            # 🏁 配速診斷結果
+            # ========================================
+            st.subheader("🏁 混合預測結果")
             
-            col1, col2, col3 = st.columns(3)
-            col1.metric("配速類型", diag.get('pace_name', 'N/A'))
-            col2.metric("信心度", f"{diag.get('confidence', 0):.1f}%")
+            col1, col2, col3, col4 = st.columns(4)
             
-            # 信心度顏色指示
-            confidence = diag.get('confidence', 0)
-            if confidence >= 70:
-                confidence_color = "🟢 高"
-            elif confidence >= 40:
-                confidence_color = "🟡 中"
-            else:
-                confidence_color = "🔴 低"
-            col3.metric("信心指示", confidence_color)
+            with col1:
+                st.metric("配速類型", diag.get('pace_name', 'N/A'))
             
+            with col2:
+                confidence = diag.get('confidence', 0)
+                st.metric("信心度", f"{confidence:.1f}%")
+            
+            with col3:
+                # 信心度顏色指示
+                if confidence >= 70:
+                    confidence_color = "🟢 高"
+                elif confidence >= 40:
+                    confidence_color = "🟡 中"
+                else:
+                    confidence_color = "🔴 低"
+                st.metric("信心指示", confidence_color)
+            
+            with col4:
+                # 預測方法
+                method = diag.get('method', 'unknown')
+                method_display = {
+                    'hybrid': '🔬 混合',
+                    'distribution': '📊 分佈',
+                    'pressure': '⚡壓力'
+                }.get(method, method)
+                st.metric("預測方法", method_display)
+            
+            # ========================================
+            # 📝 特徵與建議
+            # ========================================
             st.markdown(f"**📝 特徵**: {diag.get('characteristics', 'N/A')}")
             st.markdown(f"**💡 建議**: {diag.get('suggestion', 'N/A')}")
             
             # ========================================
+            # 🔬 混合預測詳細分析
+            # ========================================
+            with st.expander("🔬 混合預測詳細分析", expanded=True):
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.markdown("#### 📊 馬群分佈分析")
+                    dist_result = diag.get('distribution_result', {})
+                    st.write(f"- **判定**: {dist_result.get('pace_name', 'N/A')}")
+                    st.write(f"- **信心度**: {dist_result.get('confidence', 0):.1f}%")
+                    st.write(f"- **前置馬**: {dist_result.get('front_count', 0)} 匹")
+                    st.write(f"- **中置馬**: {dist_result.get('mid_count', 0)} 匹")
+                    st.write(f"- **後置馬**: {dist_result.get('back_count', 0)} 匹")
+                
+                with col2:
+                    st.markdown("#### ⚡ 前段壓力分析（EPP 方法）")
+                    pressure_result = diag.get('pressure_result', {})
+                    epp_details = pressure_result.get('details', {})
+                    
+                    # ✅ 基本信息
+                    st.write(f"- **判定**: {pressure_result.get('pace_name', 'N/A')}")
+                    st.write(f"- **信心度**: {pressure_result.get('confidence', 0):.1f}%")
+                    
+                    # ✅ EPP 指數（真正的壓力指標）
+                    epp_index = epp_details.get('epp_index', 0)
+                    st.write(f"- **EPP 指數**: {epp_index:.2f}")
+                    
+                    # ✅ 詳細數據
+                    st.write(f"- **前段門值**: ≤ {epp_details.get('front_threshold', 0):.1f} 位")
+                    st.write(f"- **前段壓力馬**: {epp_details.get('front_horses_count', 0)} 匹")
+                    st.write(f"- **EPP 比例**: {epp_details.get('epp_ratio', 0):.2%}")
+                    
+                    # ✅ 壓力指數顏色標示（基於 EPP）
+                    if epp_index >= 5.8:
+                        st.error("🔥 前段壓力極大 - 預期快步速")
+                    elif epp_index >= 4.5:
+                        st.warning("⚡ 前段壓力較高 - 預期偏快步速")
+                    elif epp_index >= 3.2:
+                        st.info("⚖️ 前段壓力適中 - 預期中等步速")
+                    elif epp_index >= 2.0:
+                        st.success("🐢 前段壓力較低 - 預期偏慢步速")
+                    else:
+                        st.success("✅ 前段壓力極低 - 預期慢步速")
+                    
+                    # ✅ 前段馬匹明細表
+                    front_horses = epp_details.get('front_horses', [])
+                    if front_horses:
+                        st.markdown("---")
+                        st.markdown("**🐴 前段馬匹明細:**")
+                        
+                        # 創建 DataFrame
+                        front_df = pd.DataFrame(front_horses)
+                        
+                        # 顯示表格
+                        st.dataframe(
+                            front_df,
+                            column_config={
+                                'name': st.column_config.TextColumn('馬名', width='medium'),
+                                'adjusted_position': st.column_config.NumberColumn(
+                                    '調整位',
+                                    format='%.2f'
+                                ),
+                                'draw': st.column_config.NumberColumn('檔位', format='%d'),
+                                'weight': st.column_config.NumberColumn(
+                                    '權重',
+                                    format='%.1f',
+                                    help='外檔(≥9)加權1.5，其他1.0'
+                                ),
+                                'note': st.column_config.TextColumn('備註', width='small')
+                            },
+                            hide_index=True,
+                            use_container_width=True
+                        )
+                        
+                        # 統計外檔馬
+                        outer_draw_horses = [h for h in front_horses if h.get('draw', 0) >= 9]
+                        if outer_draw_horses:
+                            st.info(f"ℹ️ 其中 {len(outer_draw_horses)} 匹為外檔馬（≥9檔），加權計算")
+                
+                # 距離調整說明
+                st.markdown("---")
+                st.markdown("#### 🏁 距離調整")
+                
+                distance_factor = diag.get('distance_factor', 1.0)
+                if race_distance <= 1200:
+                    st.info(f"🏃 短途賽事 ({race_distance}米) - 節奏加快 {(distance_factor-1)*100:.0f}%")
+                elif race_distance >= 2000:
+                    st.info(f"🐢 長途賽事 ({race_distance}米) - 節奏放慢 {(1-distance_factor)*100:.0f}%")
+                else:
+                    st.info(f"⚖️ 標準距離 ({race_distance}米) - 節奏正常")
+            
+            # ========================================
             # 📊 實際 vs 期望分佈對比
             # ========================================
-            
             st.markdown("---")
             st.subheader("📊 實際 vs 期望分佈")
             
@@ -469,7 +594,7 @@ def render_pace_prediction_analysis(race_horses_data, total_runners=None):
             
             # 獲取當前配速的期望分佈
             expected_dist = predictor.get_expected_distribution(
-                diag.get('pace_type', 'NORMAL'), 
+                diag.get('pace_type', 'NORMAL'),
                 current_total
             )
             
@@ -503,11 +628,11 @@ def render_pace_prediction_analysis(race_horses_data, total_runners=None):
                     '跑法': st.column_config.TextColumn('跑法', width='medium'),
                     '實際': st.column_config.NumberColumn('實際', format='%d 匹'),
                     '期望': st.column_config.NumberColumn(
-                        f'期望 ({diag.get("pace_name", "N/A")})', 
+                        f'期望 ({diag.get("pace_name", "N/A")})',
                         format='%d 匹'
                     ),
                     '差距': st.column_config.NumberColumn(
-                        '差距', 
+                        '差距',
                         format='%+d',
                         help='正數=多於期望，負數=少於期望'
                     )
@@ -542,9 +667,8 @@ def render_pace_prediction_analysis(race_horses_data, total_runners=None):
                 st.bar_chart(expected_chart.set_index('跑法'))
             
             # ========================================
-            # 📊 距離矩陣（詳細分析）
+            # 📊 距離矩陣（5 種配速）
             # ========================================
-            
             with st.expander("📊 距離矩陣（5 種配速）", expanded=False):
                 distances = diag.get('distances', {})
                 
@@ -591,7 +715,6 @@ def render_pace_prediction_analysis(race_horses_data, total_runners=None):
             # ========================================
             # 📚 五步速期望分佈（當前場次）
             # ========================================
-            
             with st.expander(f"📚 五步速期望分佈（{current_total} 匹馬）", expanded=False):
                 st.markdown(f"**當前場次期望馬群配置（{current_total} 匹馬）:**")
                 
@@ -622,53 +745,11 @@ def render_pace_prediction_analysis(race_horses_data, total_runners=None):
                 )
                 
                 st.markdown("---")
-                st.markdown("**📖 算法說明:**")
-                st.markdown(f"- 標準模板基於 12 匹馬")
-                st.markdown(f"- 當前場次 {current_total} 匹馬，縮放比例: {current_total/12:.2f}x")
-                st.markdown(f"- 實際分佈會標準化到 12 匹馬後再與模板比較")
-                st.markdown(f"- 因此**無論多少匹馬，診斷邏輯保持一致**")
-            
-            # ========================================
-            # 🔧 配速校正（帶距離影響）
-            # ========================================
-            
-            st.markdown("---")
-            st.subheader("🔧 配速校正")
-            
-            if hasattr(predictor, 'predict_pace'):
-                # ✅ 使用最新數據
-                pace = predictor.predict_pace(
-                    st.session_state.pace_predictions, 
-                    race_distance=1800
-                )
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.markdown("#### 基礎配速")
-                    st.metric("基礎值", f"{pace.get('base_pace', 0):.2f}")
-                    st.metric("距離係數", f"{pace.get('distance_factor', 0):.2f}")
-                    st.metric("賽程", f"{pace.get('race_distance', 0)} 米")
-                
-                with col2:
-                    st.markdown("#### 調整後配速")
-                    st.metric("早段", f"{pace.get('early_pace', 0):.2f}")
-                    st.metric("中段", f"{pace.get('mid_pace', 0):.2f}")
-                    st.metric("晚段", f"{pace.get('late_pace', 0):.2f}")
-                
-                # 距離影響說明
-                distance = pace.get('race_distance', 1800)
-                if distance <= 1200:
-                    distance_note = "🏃 短途賽事，節奏加快 15%"
-                elif distance >= 2000:
-                    distance_note = "🐢 長途賽事，節奏放慢 15%"
-                else:
-                    distance_note = "⚖️ 標準中距離，節奏正常"
-                
-                if pace.get('adjustment_applied'):
-                    st.success(f"✅ {distance_note}")
-                else:
-                    st.info(f"ℹ️ {distance_note}")
+                st.markdown("**📖 混合預測算法說明:**")
+                st.markdown(f"- ⚡ **前段壓力**: 分析前置馬檔位分佈，計算壓力指數")
+                st.markdown(f"- 📊 **馬群分佈**: 標準化到 12 匹馬後與模板比較")
+                st.markdown(f"- 🏁 **距離影響**: 短途加快 15%，長途放慢 15%")
+                st.markdown(f"- 🔬 **信心加權**: 動態計算最終配速與信心度")
         
         except Exception as e:
             st.warning(f"配速分析失敗: {e}")
@@ -678,7 +759,7 @@ def render_pace_prediction_analysis(race_horses_data, total_runners=None):
     st.markdown("---")
     st.markdown(
         f"<div style='text-align: center; color: #888; font-size: 11px;'>"
-        f"v5.7 Dynamic Scale - {current_race_id} | 2026-01-10"
+        f"v6.0 Hybrid Prediction - {current_race_id} | 2026-01-16"
         f"</div>",
         unsafe_allow_html=True
     )
