@@ -613,6 +613,29 @@ def render_pace_prediction_analysis(race_horses_data, total_runners=None):
                     st.write(f"- **判定**: {pressure_result.get('pace_name', 'N/A')}")
                     st.write(f"- **信心度**: {pressure_result.get('confidence', 0):.1f}%")
                     st.write(f"- **壓力指數**: {pressure_result.get('pressure_index', 0):.2f}")
+
+                    # ✅ 新增：前段馬匹明細
+                    pressure_details = pressure_result.get('details', {})
+                    front_horses = pressure_details.get('front_horses', [])
+                    
+                    if front_horses:
+                        st.markdown("---")
+                        st.markdown("**🐴 前段馬匹明細:**")
+                        
+                        front_df = pd.DataFrame(front_horses)
+                        st.dataframe(
+                            front_df,
+                            column_config={
+                                'name': '馬名',
+                                'draw': st.column_config.NumberColumn('檔位', format='%d'),
+                                'adjusted_position': st.column_config.NumberColumn('調整位', format='%.2f'),
+                                'weight': st.column_config.NumberColumn('權重', format='%.1f'),
+                                'note': '備註'
+                            },
+                            hide_index=True,
+                            use_container_width=True
+                        )
+                      
                     
                     # 壓力指數顏色標示
                     pressure_idx = pressure_result.get('pressure_index', 0)
