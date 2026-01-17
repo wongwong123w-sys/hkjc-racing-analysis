@@ -1,9 +1,9 @@
 
 # -*- coding: utf-8 -*-
-"""
-馬匹跑法預測器 v4.2 - 簡潔評論版（修正）
 
-RunstylePredictor - Concise Comment Version (Fixed)
+"""
+馬匹跑法預測器 v4.3 - EPP 方法適配版
+RunstylePredictor - EPP Method Adapted Version
 
 改進：
 - ✅ 改進 1: 近績權重（最近 3 場權重更高）
@@ -11,8 +11,9 @@ RunstylePredictor - Concise Comment Version (Fixed)
 - ✅ 改進 3: 簡潔評論（精簡風格）
 - ✅ 修復：支持空格分隔的 running_path（'1 1 5'）
 - ✅ 修復：draw_factor → draw_adjustment
+- ✅ 新增：返回 draw 欄位（適配 EPP 方法）
 
-日期: 2026-01-10
+日期: 2026-01-16
 """
 
 import numpy as np
@@ -21,10 +22,9 @@ from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-
 class RunstylePredictor:
     """
-    馬匹跑法預測器 v4.2
+    馬匹跑法預測器 v4.3
     
     改進：
     - ✅ 改進 1: 近績權重（最近 3 場權重更高）
@@ -32,16 +32,17 @@ class RunstylePredictor:
     - ✅ 改進 3: 簡潔評論（精簡風格）
     - ✅ 修復：支持空格分隔的 running_path（'1 1 5'）
     - ✅ 修復：draw_factor → draw_adjustment
+    - ✅ 新增：返回 draw 欄位（適配 EPP 方法）
     """
     
     def __init__(self):
         """初始化預測器"""
-        logger.info("✅ RunstylePredictor v4.2 (Concise-Fixed) 已初始化")
+        logger.info("✅ RunstylePredictor v4.3 (EPP-Adapted) 已初始化")
     
     def _filter_history_by_distance(
-        self, 
-        history: List[Dict], 
-        target_distance: int, 
+        self,
+        history: List[Dict],
+        target_distance: int,
         tolerance: int = 200,
         min_records: int = 3
     ) -> List[Dict]:
@@ -53,7 +54,7 @@ class RunstylePredictor:
         
         # ±200 米
         filtered_200 = [
-            r for r in history 
+            r for r in history
             if r.get('distance') and abs(r['distance'] - target_distance) <= 200
         ]
         
@@ -63,7 +64,7 @@ class RunstylePredictor:
         
         # ±400 米
         filtered_400 = [
-            r for r in history 
+            r for r in history
             if r.get('distance') and abs(r['distance'] - target_distance) <= 400
         ]
         
@@ -77,7 +78,6 @@ class RunstylePredictor:
     def _get_draw_analysis(self, draw: int, total_runners: int) -> tuple:
         """
         檔位分析（返回修正值和簡潔描述）
-        
         Returns:
             tuple: (adjustment, description)
         """
@@ -95,8 +95,8 @@ class RunstylePredictor:
             return (-0.1, f"內檔{draw}稍有利")
     
     def predict_running_style(
-        self, 
-        horse_data: Dict, 
+        self,
+        horse_data: Dict,
         total_runners: Optional[int] = None
     ) -> Optional[Dict]:
         """預測馬匹跑法（簡潔版）"""
@@ -110,12 +110,11 @@ class RunstylePredictor:
             logger.info(f"🐴 預測: 馬{horse_num} {horse_name} (檔位={draw}, {target_distance}米)")
             
             history = horse_data.get('history', [])
-            
             if not history:
                 logger.warning(f"❌ 無往績")
                 return None
             
-            logger.info(f"  原始往績: {len(history)} 場")
+            logger.info(f"   原始往績: {len(history)} 場")
             
             # 距離過濾
             filtered_history = self._filter_history_by_distance(
@@ -126,7 +125,7 @@ class RunstylePredictor:
                 logger.warning(f"❌ 過濾後無往績")
                 return None
             
-            logger.info(f"  過濾後: {len(filtered_history)} 場")
+            logger.info(f"   過濾後: {len(filtered_history)} 場")
             
             # 提取早段位置
             valid_records = []
@@ -134,11 +133,10 @@ class RunstylePredictor:
             
             for idx, record in enumerate(filtered_history):
                 running_path = record.get('running_path', '')
-                
-                logger.debug(f"    往績{idx+1}: '{running_path}', {record.get('distance')}米")
+                logger.debug(f"   往績{idx+1}: '{running_path}', {record.get('distance')}米")
                 
                 if not running_path or running_path == '-' or running_path == '--':
-                    logger.debug(f"      ⚠️ 跳過: 無效")
+                    logger.debug(f"     ⚠️ 跳過: 無效")
                     continue
                 
                 # 支持空格、逗號、破折號分隔
@@ -152,30 +150,30 @@ class RunstylePredictor:
                 positions = [p.strip() for p in positions if p.strip()]
                 
                 if not positions:
-                    logger.debug(f"      ⚠️ 跳過: 解析後為空")
+                    logger.debug(f"     ⚠️ 跳過: 解析後為空")
                     continue
                 
                 try:
                     early_pos = int(positions[0])
                     early_positions.append(early_pos)
                     valid_records.append(record)
-                    logger.debug(f"      ✅ 早段位置: {early_pos}")
+                    logger.debug(f"     ✅ 早段位置: {early_pos}")
                 except (ValueError, IndexError) as e:
-                    logger.debug(f"      ❌ 解析失敗: {e}")
+                    logger.debug(f"     ❌ 解析失敗: {e}")
                     continue
             
             if not early_positions:
                 logger.warning(f"❌ 無有效早段位置")
                 return None
             
-            logger.info(f"  有效早段位置: {early_positions}")
+            logger.info(f"   有效早段位置: {early_positions}")
             
             # 近績權重
             has_dates = all('date' in r for r in valid_records)
             if has_dates:
                 valid_records_with_pos = list(zip(valid_records, early_positions))
                 valid_records_with_pos.sort(
-                    key=lambda x: x[0].get('date', ''), 
+                    key=lambda x: x[0].get('date', ''),
                     reverse=True
                 )
                 valid_records = [r for r, _ in valid_records_with_pos]
@@ -183,7 +181,7 @@ class RunstylePredictor:
             
             # 計算權重
             recency_weights = [
-                max(0.5, 1.0 - 0.1 * idx) 
+                max(0.5, 1.0 - 0.1 * idx)
                 for idx in range(len(early_positions))
             ]
             
@@ -193,7 +191,7 @@ class RunstylePredictor:
             # 計算穩定性
             std_dev = np.std(early_positions) if len(early_positions) > 1 else 0
             
-            logger.info(f"  加權基準位: {baseline_pos:.2f} (標準差: {std_dev:.2f})")
+            logger.info(f"   加權基準位: {baseline_pos:.2f} (標準差: {std_dev:.2f})")
             
             # 檔位修正
             if total_runners is None:
@@ -202,8 +200,13 @@ class RunstylePredictor:
             draw_adjustment, draw_desc = self._get_draw_analysis(draw, total_runners)
             adjusted_pos = baseline_pos + draw_adjustment
             
-            logger.info(f"  檔位分析: {draw_desc}")
-            logger.info(f"  修正: {draw_adjustment:+.1f} → 調整位: {adjusted_pos:.2f}")
+            logger.info(f"   檔位分析: {draw_desc}")
+            logger.info(f"   修正: {draw_adjustment:+.1f} → 調整位: {adjusted_pos:.2f}")
+            
+            # ========================================
+            # ✅ EPP 方法需要的日誌
+            # ========================================
+            logger.info(f"   🔑 EPP 數據: adjusted_position={adjusted_pos:.2f}, draw={draw}")
             
             # 動態分類
             front_threshold = total_runners * 0.3
@@ -224,12 +227,11 @@ class RunstylePredictor:
                 valid_records, early_positions, len(filtered_history)
             )
             
-            logger.info(f"  跑法: {running_style} ({style_desc}), 信心度: {confidence}%")
+            logger.info(f"   跑法: {running_style} ({style_desc}), 信心度: {confidence}%")
             
             # ========================================
             # ✅ 簡潔評論（風格統一）
             # ========================================
-            
             # 跑法描述
             base_desc = f"{horse_name} 習慣{style_desc}"
             
@@ -260,6 +262,7 @@ class RunstylePredictor:
                 'horse_name': horse_name,
                 'baseline_position': round(baseline_pos, 2),
                 'adjusted_position': round(adjusted_pos, 2),
+                'draw': draw,  # ← ✅ 新增：EPP 方法需要
                 'running_style': running_style,
                 'confidence': round(confidence, 2),
                 'comment': comment,
@@ -275,8 +278,8 @@ class RunstylePredictor:
             return None
     
     def _calculate_confidence(
-        self, 
-        records: List[Dict], 
+        self,
+        records: List[Dict],
         positions: List[int],
         filtered_count: int
     ) -> float:
@@ -292,7 +295,6 @@ class RunstylePredictor:
         
         if len(positions) > 1:
             std_dev = np.std(positions)
-            
             if std_dev > 3.0:
                 stability_penalty = -15
             elif std_dev > 2.0:
@@ -305,12 +307,11 @@ class RunstylePredictor:
             stability_penalty = -10
         
         confidence = base_confidence + stability_penalty
-        
         return max(0, min(100, confidence))
     
     def predict_new_horse_running_style(
-        self, 
-        horse_data: Dict, 
+        self,
+        horse_data: Dict,
         total_runners: Optional[int] = None
     ) -> Optional[Dict]:
         """預測無往績馬（簡潔版）"""
@@ -339,6 +340,11 @@ class RunstylePredictor:
             # ✅ 修正：使用 draw_adjustment 而非 draw_factor
             adjusted_pos = baseline_pos + draw_adjustment + rating_adjustment
             adjusted_pos = max(1.0, min(adjusted_pos, float(total_runners)))
+            
+            # ========================================
+            # ✅ EPP 方法需要的日誌
+            # ========================================
+            logger.info(f"   🔑 EPP 數據: adjusted_position={adjusted_pos:.2f}, draw={draw}")
             
             # 分類
             front_threshold = total_runners * 0.3
@@ -373,7 +379,6 @@ class RunstylePredictor:
             # ========================================
             # ✅ 簡潔評論（新馬風格）
             # ========================================
-            
             # 評分描述
             if rating >= 85:
                 rating_desc = f"，評分{rating}屬高水平"
@@ -392,6 +397,7 @@ class RunstylePredictor:
                 'horse_name': horse_name,
                 'baseline_position': round(baseline_pos, 2),
                 'adjusted_position': round(adjusted_pos, 2),
+                'draw': draw,  # ← ✅ 新增：EPP 方法需要
                 'running_style': running_style,
                 'confidence': confidence,
                 'comment': comment,
@@ -430,9 +436,11 @@ if __name__ == '__main__':
     
     if result:
         print(f"\n✅ 預測結果:")
-        print(f"  跑法: {result['running_style']}")
-        print(f"  信心度: {result['confidence']}%")
-        print(f"  評論: {result['comment']}")
+        print(f"   跑法: {result['running_style']}")
+        print(f"   調整位: {result['adjusted_position']}")
+        print(f"   檔位: {result['draw']}")  # ← 新增顯示
+        print(f"   信心度: {result['confidence']}%")
+        print(f"   評論: {result['comment']}")
     
     print("\n" + "="*60)
     print("測試 2: 無往績馬")
@@ -449,6 +457,8 @@ if __name__ == '__main__':
     
     if result2:
         print(f"\n✅ 預測結果:")
-        print(f"  跑法: {result2['running_style']}")
-        print(f"  信心度: {result2['confidence']}%")
-        print(f"  評論: {result2['comment']}")
+        print(f"   跑法: {result2['running_style']}")
+        print(f"   調整位: {result2['adjusted_position']}")
+        print(f"   檔位: {result2['draw']}")  # ← 新增顯示
+        print(f"   信心度: {result2['confidence']}%")
+        print(f"   評論: {result2['comment']}")

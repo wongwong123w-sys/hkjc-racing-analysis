@@ -316,6 +316,389 @@ class PacePredictor:
                 'error': str(e)
             }
 
+    def predict_pace_by_epp(self, predictions: List[Dict], total_horses: int = 12) -> Dict:
+        """EPP (Expected Pace Profile) 方法預測配速 - 前段壓力指標版"""
+        try:
+            logger.info("=" * 60)
+            logger.info("🔍 EPP 方法：前段壓力指標計算")
+            logger.info("=" * 60)
+            
+            if not predictions or len(predictions) == 0:
+                logger.warning("無預測數據，使用默認值")
+                return {
+                    "pace_type": "NORMAL",
+                    "pace_value": 2.0,
+                    "confidence": 0.0,
+                    "reasoning": "無數據",
+                    "details": {},
+                }
+            
+            # ========================================
+            # ✅ 第一步：計算前段壓力指標 (EPP)
+            # ========================================
+            front_threshold = total_horses / 3.0  # 前段定義：前 1/3 位置
+            logger.info(f"前段門值: ≤ {front_threshold:.1f} 位")
+            
+            epp = 0.0  # EPP 指數（馬匹數）
+            front_horses = []  # 前段馬匹明細
+            
+            for p in predictions:
+                # ✅ 使用 adjusted_position 而非 running_style
+                adj_pos = p.get('adjusted_position')
+                draw = p.get('draw', 6)
+                horse_name = p.get('horse_name', f"馬{p.get('horse_number', '?')}")
+                
+                if adj_pos is None:
+                    logger.warning(f"⚠️ {horse_name} 缺少 adjusted_position，跳過")
+                    continue
+                
+                # 判斷是否為前段馬
+                if adj_pos <= front_threshold:
+                    # ✅ 外檔加權（檔位 ≥ 9）
+                    if draw >= 9:
+                        weight = 1.5  # 外檔搶放加權（可優化至 1.8）
+                        epp += weight
+                        front_horses.append({
+                            'name': horse_name,
+                            'adjusted_position': adj_pos,
+                            'draw': draw,
+                            'weight': weight,
+                            'note': '外檔搶放'
+                        })
+                        logger.debug(f"  ✅ {horse_name} (檔{draw}, 調整位{adj_pos:.2f}) +{weight} [外檔]")
+                    else:
+                        weight = 1.0
+                        epp += weight
+                        front_horses.append({
+                            'name': horse_name,
+                            'adjusted_position': adj_pos,
+                            'draw': draw,
+                            'weight': weight,
+                            'note': '內/中檔'
+                        })
+                        logger.debug(f"  ✅ {horse_name} (檔{draw}, 調整位{adj_pos:.2f}) +{weight}")
+            
+            logger.info(f"前段壓力馬數: {len(front_horses)} 匹")
+            logger.info(f"加權 EPP 指數: {epp:.2f}")
+            
+            # ========================================
+            # ✅ 第二步：配速判定（符合附件標準）
+            # ========================================
+            # 基於 12 匹馬的標準，按比例調整
+            epp_ratio = epp / total_horses  # 標準化比例
+            
+            # ✅ 附件標準的門值（12 匹馬基準）
+            if epp <= 2.0:
+                pace_type = "SLOW"
+                pace_name = "慢步速"
+                confidence = 75.0
+            elif epp <= 3.2:
+                pace_type = "MODERATELY_SLOW"
+                pace_name = "偏慢步速"
+                confidence = 75.0
+            elif epp <= 4.5:
+                pace_type = "NORMAL"
+                pace_name = "中等步速"
+                confidence = 80.0
+            elif epp <= 5.8:
+                pace_type = "MODERATELY_FAST"
+                pace_name = "偏快步速"
+                confidence = 75.0
+            else:
+                pace_type = "FAST"
+                pace_name = "快步速"
+                confidence = 70.0
+            
+            logger.info(f"配速判定: {pace_type} ({pace_name}), EPP={epp:.2f}")
+            
+            # ========================================
+            # ✅ 第三步：推理文字
+            # ========================================
+            if epp_ratio >= 0.5:
+                reasoning = f"大量前段壓力馬({len(front_horses)}匹, EPP={epp:.1f})，搶位激烈 → 預期快步速"
+            elif epp_ratio >= 0.3:
+                reasoning = f"適量前段壓力馬({len(front_horses)}匹, EPP={epp:.1f})，配速均衡 → 預期中等步速"
+            else:
+                reasoning = f"前段壓力較低({len(front_horses)}匹, EPP={epp:.1f})，節奏穩定 → 預期較慢步速"
+            
+            logger.info(f"推理: {reasoning}")
+            
+            # ========================================
+            # ✅ 返回結果（與原格式相容）
+            # ========================================
+            result = {
+                "pace_type": pace_type,
+                "pace_value": round(epp, 2),  # ✅ 返回 EPP 指數本身
+                "confidence": round(confidence, 1),
+                "reasoning": reasoning,
+                "details": {
+                    "front_threshold": round(front_threshold, 2),
+                    "front_horses_count": len(front_horses),
+                    "front_horses": front_horses,  # 明細列表
+                    "epp_index": round(epp, 2),
+                    "epp_ratio": round(epp_ratio, 3),
+                    "total_horses": total_horses
+                },
+            }
+            
+            logger.info(f"✓ EPP 方法完成: {pace_type} (EPP={epp:.2f}, 信心度: {confidence}%)")
+            return result
+            
+        except Exception as e:
+            logger.error(f"❌ EPP 方法出錯: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return {
+                "pace_type": "NORMAL",
+                "pace_value": 2.0,
+                "confidence": 0.0,
+                "reasoning": f"錯誤: {str(e)}",
+                "details": {},
+            }
+
+    def _pace_type_to_value(self, pace_type: str) -> float:
+        """將配速類型轉換為數值 (1.0–3.0)，用於融合計算。"""
+        pace_mapping = {
+            "SLOW": 1.0,
+            "MODERATELY_SLOW": 1.5,
+            "NORMAL": 2.0,
+            "MODERATELY_FAST": 2.5,
+            "FAST": 3.0,
+        }
+        value = pace_mapping.get(pace_type, 2.0)
+        logger.debug(f"配速轉換: {pace_type} → {value}")
+        return value
+
+    def _value_to_pace_type(self, value: float) -> str:
+        """將數值配速轉回類型（最近鄰）。"""
+        if value <= 1.25:
+            return "SLOW"
+        elif value <= 1.75:
+            return "MODERATELY_SLOW"
+        elif value <= 2.25:
+            return "NORMAL"
+        elif value <= 2.75:
+            return "MODERATELY_FAST"
+        else:
+            return "FAST"
+
+    def _analyze_confidence_trend(self, conf_t: float, conf_e: float) -> str:
+        """分析傳統方法 vs EPP 方法置信度誰更強。"""
+        diff = conf_t - conf_e
+        if diff > 10:
+            trend = "傳統方法更有信心"
+        elif diff < -10:
+            trend = "EPP 方法更有信心"
+        else:
+            trend = "兩個方法置信度接近"
+
+        logger.debug(f"置信度趨勢: {trend} (差異: {diff:.1f}%)")
+        return trend
+
+    def _get_timestamp(self) -> str:
+        """回傳當前時間戳字串。"""
+        from datetime import datetime
+
+        return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    def predict_pace_hybrid_v1_confidence_weighted(
+        self, predictions: List[Dict], total_horses: int = 12
+    ) -> Dict:
+        """融合預測方案 A：置信度加權融合。"""
+        logger.info("=" * 60)
+        logger.info("🔄 開始融合預測 (方案 A：置信度加權)")
+        logger.info("=" * 60)
+    
+        try:
+            # ===== 1. 檢查數據 =====
+            logger.info("📊 [1/5] 檢查預測數據...")
+            
+            if not predictions or len(predictions) == 0:
+                logger.warning("無預測數據，返回預設值")
+                return {
+                    'method': 'hybrid',
+                    'status': 'no_data',
+                    'pace_type': 'NORMAL',
+                    'pace_name': '未知',
+                    'confidence': 0,
+                    'characteristics': '無數據',
+                    'suggestion': '需要更多數據',
+                    'distribution_result': {},
+                    'pressure_result': {},
+                    'distances': {}
+                }
+            
+            # ===== 2. 傳統方法（馬群分佈分析） =====
+            logger.info("📊 [2/5] 計算傳統步速預測...")
+            pace_traditional = self.predict_pace_diagnostic(predictions)
+            conf_traditional = pace_traditional.get("confidence", 50.0)
+            pace_type_t = pace_traditional.get("pace_type", "NORMAL")
+            pace_value_t = self._pace_type_to_value(pace_type_t)
+            
+            # ✨ 獲取馬群分佈數據
+            distribution = self.get_runstyle_distribution(predictions)
+            
+            # ===== 3. EPP 方法（前段壓力分析） =====
+            logger.info("📊 [3/5] 計算 EPP 步速預測...")
+            pace_epp = self.predict_pace_by_epp(predictions, total_horses)
+            conf_epp = pace_epp.get("confidence", 50.0)
+            pace_type_e = pace_epp.get("pace_type", "NORMAL")
+            pace_value_e = pace_epp.get("pace_value", 2.0)
+            
+            # ===== 4. 置信度加權融合 =====
+            logger.info("📊 [4/5] 進行置信度加權融合...")
+            
+            # 計算權重（基於置信度）
+            total_confidence = conf_traditional + conf_epp
+            if total_confidence > 0:
+                w_traditional = conf_traditional / total_confidence
+                w_epp = conf_epp / total_confidence
+            else:
+                w_traditional = 0.5
+                w_epp = 0.5
+            
+            logger.info(f"   傳統方法: 配速={pace_type_t}, 置信度={conf_traditional:.1f}%, 權重={w_traditional:.2f}")
+            logger.info(f"   EPP 方法: 配速={pace_type_e}, 置信度={conf_epp:.1f}%, 權重={w_epp:.2f}")
+            
+            # 融合配速數值
+            pace_value_fusion = w_traditional * pace_value_t + w_epp * pace_value_e
+            pace_type_fusion = self._value_to_pace_type(pace_value_fusion)
+            
+            logger.info(f"   融合結果: 配速數值={pace_value_fusion:.2f} → 類型={pace_type_fusion}")
+            
+            # 計算融合後的置信度
+            divergence = abs(pace_value_t - pace_value_e)
+            
+            if divergence < 0.5:
+                consensus = "兩個方法高度一致"
+                confidence_fusion = min(95, (conf_traditional + conf_epp) / 2 * 1.2)
+            elif divergence < 1.0:
+                consensus = "兩個方法基本一致"
+                confidence_fusion = (conf_traditional + conf_epp) / 2
+            else:
+                consensus = "兩個方法存在分歧"
+                confidence_fusion = (conf_traditional + conf_epp) / 2 * 0.8
+            
+            logger.info(f"   一致性: {consensus} (分歧度={divergence:.2f})")
+            logger.info(f"   融合置信度: {confidence_fusion:.1f}%")
+            
+            # 生成建議
+            if divergence >= 1.0:
+                if conf_traditional > conf_epp + 15:
+                    recommendation = "建議偏向傳統方法（馬群分佈分析）"
+                elif conf_epp > conf_traditional + 15:
+                    recommendation = "建議偏向 EPP 方法（前段壓力分析）"
+                else:
+                    recommendation = "兩個方法分歧較大，建議結合賽事實況判斷"
+                warning = "⚠️ 注意：兩個方法的預測存在明顯差異"
+            else:
+                recommendation = "兩個方法預測一致，可信度較高"
+                warning = None
+            
+            # ===== 5. 構建頁面兼容的返回格式 =====
+            logger.info("🔍 [5/5] 生成分析...")
+            
+            # 獲取融合後的配速模板
+            fusion_template = self.pace_templates.get(pace_type_fusion, self.pace_templates['NORMAL'])
+            
+            result = {
+                # ✅ 頂層必需欄位（頁面直接使用）
+                'pace_type': pace_type_fusion,
+                'pace_name': fusion_template['name'],
+                'confidence': round(confidence_fusion, 1),
+                'characteristics': fusion_template['characteristics'],
+                'suggestion': fusion_template['suggestion'],
+                'method': 'hybrid',
+                
+                # ✅ 馬群分佈分析結果（用於詳細展示）
+                'distribution_result': {
+                    'pace_type': pace_type_t,
+                    'pace_name': pace_traditional.get('pace_name', '未知'),
+                    'confidence': round(conf_traditional, 1),
+                    'front_count': distribution['FRONT'],
+                    'mid_count': distribution['MID'],
+                    'back_count': distribution['BACK'],
+                    'total': distribution['total']
+                },
+                
+                # ✅ 前段壓力分析結果（用於詳細展示）
+                'pressure_result': {
+                    'pace_type': pace_type_e,
+                    'pace_name': self.pace_templates.get(pace_type_e, {}).get('name', '未知'),
+                    'confidence': round(conf_epp, 1),
+                    'pressure_index': pace_epp.get('pace_value', 2.0),
+                    'details': pace_epp.get('details', {})  # ✅ 完整傳遞 EPP 的 details
+                },
+                
+                # ✅ 距離矩陣（用於診斷頁面）
+                'distances': pace_traditional.get('distances', {}),
+                
+                # ✅ 距離調整因子（預設值，需要在頁面層處理實際距離）
+                'distance_factor': 1.0,
+                
+                # 📊 原始詳細數據（用於進階分析）
+                'traditional': {
+                    'pace_type': pace_type_t,
+                    'pace_value': round(pace_value_t, 2),
+                    'confidence': round(conf_traditional, 1),
+                    'reasoning': pace_traditional.get('characteristics', '')
+                },
+                'epp': {
+                    'pace_type': pace_type_e,
+                    'pace_value': round(pace_value_e, 2),
+                    'confidence': round(conf_epp, 1),
+                    'reasoning': pace_epp.get('reasoning', ''),
+                    'details': pace_epp.get('details', {})
+                },
+                'fusion': {
+                    'pace_type': pace_type_fusion,
+                    'pace_value': round(pace_value_fusion, 2),
+                    'confidence': round(confidence_fusion, 1),
+                    'weights': {
+                        'traditional': round(w_traditional, 3),
+                        'epp': round(w_epp, 3)
+                    },
+                    'divergence': round(divergence, 2)
+                },
+                'analysis': {
+                    'consensus': consensus,
+                    'recommendation': recommendation,
+                    'warning': warning,
+                    'confidence_trend': self._analyze_confidence_trend(
+                        conf_traditional, conf_epp
+                    )
+                },
+                
+                # 元數據
+                'method_version': 'v1.0_confidence_weighted',
+                'timestamp': self._get_timestamp(),
+                'status': 'success'
+            }
+            
+            logger.info("=" * 60)
+            logger.info("✅ 融合預測完成！")
+            logger.info("=" * 60)
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"❌ 融合預測錯誤: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            
+            return {
+                'method': 'hybrid',
+                'status': 'error',
+                'pace_type': 'NORMAL',
+                'pace_name': '錯誤',
+                'confidence': 0,
+                'characteristics': f'錯誤: {str(e)}',
+                'suggestion': '請檢查數據',
+                'distribution_result': {},
+                'pressure_result': {},
+                'distances': {},
+                'error_message': str(e)
+            }
+
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.DEBUG)
