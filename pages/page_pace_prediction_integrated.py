@@ -82,6 +82,94 @@ def safe_int_convert(value, default=0):
         return default
 
 
+
+
+def prepare_export_data(race_id, predictions, diag_result):
+    """
+    準備CSV導出數據
+
+    Args:
+        race_id: 場次ID (任何格式)
+        predictions: 跑法預測列表
+        diag_result: 混合預測診斷結果
+
+    Returns:
+        pd.DataFrame: 準備好的CSV數據
+    """
+    try:
+        # 解析 race_id（靈活處理多種格式）
+        date_str = "未知"
+        race_number = "未知"
+        venue = "未知"
+
+        if race_id and isinstance(race_id, str):
+            # 嘗試解析格式: "20260118-HK-R4" 或 "20260118-4" 等
+            if '-' in race_id:
+                parts = race_id.split('-')
+                if len(parts) >= 3:
+                    date_part = parts[0]
+                    venue = parts[1]
+                    race_part = parts[2]
+
+                    if len(date_part) == 8 and date_part.isdigit():
+                        date_str = f"{date_part[:4]}-{date_part[4:6]}-{date_part[6:8]}"
+
+                    if race_part.startswith('R') and race_part[1:].isdigit():
+                        race_number = int(race_part[1:])
+                    else:
+                        race_number = race_part
+                elif len(parts) >= 2:
+                    date_part = parts[0]
+                    race_number = parts[1]
+                    if len(date_part) == 8 and date_part.isdigit():
+                        date_str = f"{date_part[:4]}-{date_part[4:6]}-{date_part[6:8]}"
+
+        # 提取兩種方法的預測結果
+        dist_result = diag_result.get('distribution_result', {})
+        pressure_result = diag_result.get('pressure_result', {})
+        epp_details = pressure_result.get('details', {})
+
+        traditional_pace = dist_result.get('pace_name', '未知')
+        traditional_confidence = dist_result.get('confidence', 0)
+
+        epp_pace = pressure_result.get('pace_name', '未知')
+        epp_confidence = pressure_result.get('confidence', 0)
+        epp_index = epp_details.get('epp_index', 0)
+
+        # 構建CSV數據
+        export_rows = []
+        for pred in predictions:
+            row = {
+                'race_id': race_id or '未知',
+                'date': date_str,
+                'venue': venue,
+                'race_number': race_number,
+                'horse_number': pred.get('horse_number', 0),
+                'horse_name': pred.get('horse_name', '未知'),
+                'draw': pred.get('draw', 0),
+                'running_style': pred.get('running_style', 'MID'),
+                'adjusted_position': round(pred.get('adjusted_position', 0), 2),
+                'traditional_pace': traditional_pace,
+                'traditional_confidence': round(traditional_confidence, 1),
+                'epp_pace': epp_pace,
+                'epp_confidence': round(epp_confidence, 1),
+                'epp_index': round(epp_index, 2),
+                'final_pace': diag_result.get('pace_name', '未知'),
+                'final_confidence': round(diag_result.get('confidence', 0), 1)
+            }
+            export_rows.append(row)
+
+        df = pd.DataFrame(export_rows)
+        logger.info(f"✅ 成功準備導出數據: {len(df)} 行")
+        return df
+
+    except Exception as e:
+        logger.error(f"❌ 準備導出數據失敗: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return None
+
+
 def render_pace_prediction_analysis(race_horses_data, total_runners=None):
     """渲染跑法預測分析頁面 (v6.0 - 混合預測版)"""
     
@@ -435,7 +523,20 @@ def render_pace_prediction_analysis(race_horses_data, total_runners=None):
             # ========================================
             # 📍 關鍵改動：提取賽事距離
             # ========================================
-            race_distance = st.session_state.get('race_distance', 1800)  # 默認值
+            race_distance = 1800  # 默認值
+            
+            if race_horses_data and len(race_horses_data) > 0:
+                first_horse = race_horses_data[0]
+                
+                # 優先從馬匹數據中提取
+                if 'distance' in first_horse:
+                    race_distance = safe_int_convert(first_horse.get('distance'), 1800)
+                # 其次從往績中提取
+                elif 'racing_history' in first_horse and first_horse['racing_history']:
+                    hist = first_horse['racing_history']
+                    if len(hist) > 0:
+                        race_distance = safe_int_convert(hist[0].get('distance'), 1800)
+            
             logger.info(f"🏁 賽事距離: {race_distance} 米")
             
             # ========================================
@@ -507,69 +608,20 @@ def render_pace_prediction_analysis(race_horses_data, total_runners=None):
                     st.write(f"- **後置馬**: {dist_result.get('back_count', 0)} 匹")
                 
                 with col2:
-                    st.markdown("#### ⚡ 前段壓力分析（EPP 方法）")
+                    st.markdown("#### ⚡ 前段壓力分析")
                     pressure_result = diag.get('pressure_result', {})
-                    epp_details = pressure_result.get('details', {})
-                    
-                    # ✅ 基本信息
                     st.write(f"- **判定**: {pressure_result.get('pace_name', 'N/A')}")
                     st.write(f"- **信心度**: {pressure_result.get('confidence', 0):.1f}%")
+                    st.write(f"- **壓力指數**: {pressure_result.get('pressure_index', 0):.2f}")
                     
-                    # ✅ EPP 指數（真正的壓力指標）
-                    epp_index = epp_details.get('epp_index', 0)
-                    st.write(f"- **EPP 指數**: {epp_index:.2f}")
-                    
-                    # ✅ 詳細數據
-                    st.write(f"- **前段門值**: ≤ {epp_details.get('front_threshold', 0):.1f} 位")
-                    st.write(f"- **前段壓力馬**: {epp_details.get('front_horses_count', 0)} 匹")
-                    st.write(f"- **EPP 比例**: {epp_details.get('epp_ratio', 0):.2%}")
-                    
-                    # ✅ 壓力指數顏色標示（基於 EPP）
-                    if epp_index >= 5.8:
-                        st.error("🔥 前段壓力極大 - 預期快步速")
-                    elif epp_index >= 4.5:
-                        st.warning("⚡ 前段壓力較高 - 預期偏快步速")
-                    elif epp_index >= 3.2:
-                        st.info("⚖️ 前段壓力適中 - 預期中等步速")
-                    elif epp_index >= 2.0:
-                        st.success("🐢 前段壓力較低 - 預期偏慢步速")
+                    # 壓力指數顏色標示
+                    pressure_idx = pressure_result.get('pressure_index', 0)
+                    if pressure_idx > 4.5:
+                        st.warning("🔴 高壓力 - 前置馬競爭激烈")
+                    elif pressure_idx > 3.5:
+                        st.info("🟡 中等壓力 - 節奏穩定")
                     else:
-                        st.success("✅ 前段壓力極低 - 預期慢步速")
-                    
-                    # ✅ 前段馬匹明細表
-                    front_horses = epp_details.get('front_horses', [])
-                    if front_horses:
-                        st.markdown("---")
-                        st.markdown("**🐴 前段馬匹明細:**")
-                        
-                        # 創建 DataFrame
-                        front_df = pd.DataFrame(front_horses)
-                        
-                        # 顯示表格
-                        st.dataframe(
-                            front_df,
-                            column_config={
-                                'name': st.column_config.TextColumn('馬名', width='medium'),
-                                'adjusted_position': st.column_config.NumberColumn(
-                                    '調整位',
-                                    format='%.2f'
-                                ),
-                                'draw': st.column_config.NumberColumn('檔位', format='%d'),
-                                'weight': st.column_config.NumberColumn(
-                                    '權重',
-                                    format='%.1f',
-                                    help='外檔(≥9)加權1.5，其他1.0'
-                                ),
-                                'note': st.column_config.TextColumn('備註', width='small')
-                            },
-                            hide_index=True,
-                            use_container_width=True
-                        )
-                        
-                        # 統計外檔馬
-                        outer_draw_horses = [h for h in front_horses if h.get('draw', 0) >= 9]
-                        if outer_draw_horses:
-                            st.info(f"ℹ️ 其中 {len(outer_draw_horses)} 匹為外檔馬（≥9檔），加權計算")
+                        st.success("🟢 低壓力 - 節奏偏慢")
                 
                 # 距離調整說明
                 st.markdown("---")
@@ -755,6 +807,96 @@ def render_pace_prediction_analysis(race_horses_data, total_runners=None):
             st.warning(f"配速分析失敗: {e}")
             import traceback
             st.error(traceback.format_exc())
+
+
+    # ======================================
+    # 📥 Part 4: CSV 導出功能
+    # ======================================
+    st.write("---")
+    st.header("📥 Part 4: 導出預測數據")
+
+    if st.session_state.pace_predictions:
+        st.info("💡 提示：下載 CSV 後可用於後續分析，或與實際配速對比")
+
+        # 檢查是否有 Part 3 的預測結果
+        if 'diag' in locals() and diag:
+            # 準備導出數據
+            export_df = prepare_export_data(
+                current_race_id, 
+                st.session_state.pace_predictions,
+                diag
+            )
+
+            if export_df is not None and len(export_df) > 0:
+                col1, col2 = st.columns([3, 1])
+
+                with col1:
+                    st.success(f"✅ 已準備 {len(export_df)} 匹馬的預測數據")
+
+                    # 數據預覽
+                    with st.expander("📋 數據預覽", expanded=False):
+                        st.dataframe(
+                            export_df,
+                            use_container_width=True,
+                            hide_index=True
+                        )
+
+                with col2:
+                    # 生成文件名
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    race_id_safe = str(current_race_id).replace('/', '-').replace(':', '-')
+                    filename = f"pace_prediction_{race_id_safe}_{timestamp}.csv"
+
+                    # CSV 下載按鈕
+                    csv_buffer = BytesIO()
+                    export_df.to_csv(csv_buffer, index=False, encoding='utf-8-sig')
+                    csv_buffer.seek(0)
+
+                    st.download_button(
+                        label="📥 下載 CSV",
+                        data=csv_buffer.getvalue(),
+                        file_name=filename,
+                        mime="text/csv",
+                        key="download_pace_csv",
+                        use_container_width=True
+                    )
+
+                # 欄位說明
+                with st.expander("📖 CSV 欄位說明", expanded=False):
+                    st.markdown("""
+                    | 欄位 | 說明 |
+                    |------|------|
+                    | `race_id` | 場次識別碼 |
+                    | `date` | 日期 (YYYY-MM-DD) |
+                    | `venue` | 場地 (HK/ST) |
+                    | `race_number` | 場次號碼 |
+                    | `horse_number` | 馬號 |
+                    | `horse_name` | 馬名 |
+                    | `draw` | 檔位 |
+                    | `running_style` | 預測跑法 (FRONT/MID/BACK) |
+                    | `adjusted_position` | 調整後預期位置 |
+                    | `traditional_pace` | 傳統方法配速判定 |
+                    | `traditional_confidence` | 傳統方法信心度 (%) |
+                    | `epp_pace` | EPP方法配速判定 |
+                    | `epp_confidence` | EPP方法信心度 (%) |
+                    | `epp_index` | ⭐ EPP壓力指數 |
+                    | `final_pace` | 混合預測最終配速 |
+                    | `final_confidence` | 混合預測信心度 (%) |
+                    """)
+
+                    st.markdown("---")
+                    st.markdown("**💡 使用建議：**")
+                    st.markdown("- 📊 收集多場數據後分析各方法準確率")
+                    st.markdown("- 🔬 對比 EPP 指數與實際步速的相關性")
+                    st.markdown("- 📈 追蹤不同場地/距離的預測表現")
+                    st.markdown("- 📁 actual_pace 需另外補充（賽後1-2日從馬會網站獲取）")
+            else:
+                st.warning("⚠️ 無法生成導出數據")
+        else:
+            st.warning("⚠️ 請先完成 Part 3 配速診斷")
+    else:
+        st.warning("⚠️ 請先完成 Part 1 跑法預測")
+
     
     st.markdown("---")
     st.markdown(
